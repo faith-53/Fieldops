@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: fieldops
+      POSTGRES_USER: fieldops
+      POSTGRES_PASSWORD: fieldops
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldops"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend,nginx
+      SEED_DEMO: "true"
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build: ./backend
+    command: celery -A config worker -l info
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend
+    depends_on:
+      - backend
+      - redis
+
+  celery-beat:
+    build: ./backend
+    command: celery -A config beat -l info
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - backend
+      - redis
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  postgres_data:
+  media_data:
